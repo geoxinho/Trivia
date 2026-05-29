@@ -1,0 +1,45 @@
+name: Deploy Secure Static Site to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: "pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Inject Production Gemini API Key
+        run: |
+          # Replace the placeholder in app.js with the GitHub Action Secret key
+          sed -i "s|__GEMINI_API_KEY_PLACEHOLDER__|${{ secrets.GEMINI_API_KEY }}|g" app.js
+          echo "✅ Production API key successfully injected into static build."
+
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Static Web Files Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Upload the entire root directory
+          path: '.'
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

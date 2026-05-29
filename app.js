@@ -15,34 +15,23 @@ let hintsLeft = 3;
 let usedHint = false;
 let correctAnswersCount = 0;
 let lastAnswerWasCorrect = false;
-let apiKey = localStorage.getItem('naijalearn_gemini_api_key') || '';
-let isBackendMode = false;
+const INJECTED_KEY = '__GEMINI_API_KEY_PLACEHOLDER__';
+let apiKey = '';
 
-// ===== CHECK BACKEND SERVICE =====
-async function checkBackendConnection() {
-  try {
-    const res = await fetch('/api/config');
-    if (res.ok) {
-      const config = await res.json();
-      if (config.hasApiKey) {
-        isBackendMode = true;
-        apiKey = 'backend-managed';
-        console.log('Secure Node.js backend proxy detected. Storing key server-side.');
-        
-        // Hide "Change API Key" options since they aren't needed in secure production mode
-        const btnChangeKey = document.getElementById('btnChangeKey');
-        if (btnChangeKey) btnChangeKey.style.display = 'none';
-        
-        // Hide from start/retry screens too
-        document.querySelectorAll('.btn-change-key').forEach(btn => btn.style.display = 'none');
-        
-        return true;
-      }
+// ===== INITIALIZE API KEY =====
+async function initApiKey() {
+  if (INJECTED_KEY && !INJECTED_KEY.startsWith('__')) {
+    apiKey = INJECTED_KEY;
+    console.log('Using production API key.');
+    const btnChangeKey = document.getElementById('btnChangeKey');
+    if (btnChangeKey) btnChangeKey.style.display = 'none';
+    document.querySelectorAll('.btn-change-key').forEach(btn => btn.style.display = 'none');
+  } else {
+    await loadLocalApiKey();
+    if (!apiKey) {
+      apiKey = localStorage.getItem('naijalearn_gemini_api_key') || '';
     }
-  } catch (err) {
-    // Fail silently, fall back to standalone frontend mode
   }
-  return false;
 }
 
 // ===== GEMINI MODEL =====
@@ -94,10 +83,7 @@ async function loadLocalApiKey() {
 // ===== DOM CONTENT LOADED =====
 document.addEventListener('DOMContentLoaded', async () => {
   initParticles();
-  const backendConnected = await checkBackendConnection();
-  if (!backendConnected) {
-    await loadLocalApiKey();
-  }
+  await initApiKey();
   setupApiKeyModal();
 
   // Category buttons
@@ -336,24 +322,6 @@ function resetGameStats() {
 
 // ===== GEMINI: GENERATE QUESTIONS =====
 async function fetchQuestionsFromGemini() {
-  if (isBackendMode) {
-    try {
-      const res = await fetch('/api/generate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ category, difficulty })
-      });
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        return { error: errData.error || `Server Error: ${res.status}` };
-      }
-      return await res.json();
-    } catch (err) {
-      console.error('Backend generate error:', err);
-      return { error: '⚠️ Could not connect to the backend server.' };
-    }
-  }
-
   const catPrompt = CATEGORY_PROMPTS[category] || CATEGORY_PROMPTS['all'];
   const diffDesc = {
     easy:   'beginner-friendly, widely-known facts',
@@ -439,21 +407,6 @@ Respond with ONLY a JSON array, nothing else:
 
 // ===== GEMINI: GENERATE FUN FACT =====
 async function fetchFunFactFromGemini(questionText) {
-  if (isBackendMode) {
-    try {
-      const res = await fetch('/api/funfact', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ questionText })
-      });
-      if (!res.ok) return null;
-      return await res.json();
-    } catch (err) {
-      console.error('Backend funfact error:', err);
-      return null;
-    }
-  }
-
   const prompt = `Give me one surprising fun fact related to: "${questionText}"
 Keep it to 1-2 sentences. Make it educational and interesting.
 Respond with ONLY this JSON, nothing else:
@@ -826,31 +779,21 @@ async function sendGeminiMessage() {
 
   try {
     const factText = document.getElementById('funfactText')?.textContent || '';
-    
-    let res;
-    if (isBackendMode) {
-      res = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ factText, message: text })
-      });
-    } else {
-      res = await fetch(`${GEMINI_BASE}?key=${apiKey}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          contents: [{
-            role: 'user',
-            parts: [{
-              text: `You are an enthusiastic and knowledgeable trivia AI companion. Be warm, educational, and engaging.
+    const res = await fetch(`${GEMINI_BASE}?key=${apiKey}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{
+          role: 'user',
+          parts: [{
+            text: `You are an enthusiastic and knowledgeable trivia AI companion. Be warm, educational, and engaging.
 Context — the player just read this fun fact: "${factText}".
 Player asks: ${text}
 Respond clearly and concisely (2-3 paragraphs max).`
-            }]
           }]
-        })
-      });
-    }
+        }]
+      })
+    });
 
     if (loadingMsg?.parentNode) loadingMsg.parentNode.removeChild(loadingMsg);
 
@@ -860,12 +803,7 @@ Respond clearly and concisely (2-3 paragraphs max).`
     }
 
     const data = await res.json();
-    let botText;
-    if (isBackendMode) {
-      botText = data.text;
-    } else {
-      botText = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No response received. Try again!';
-    }
+    const botText = data?.candidates?.[0]?.content?.parts?.[0]?.text || 'No response received. Try again!';
     appendChatMessage('bot', botText);
 
   } catch (err) {
