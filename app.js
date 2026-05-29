@@ -19,17 +19,18 @@ const INJECTED_KEY = '__GEMINI_API_KEY_PLACEHOLDER__';
 let apiKey = '';
 
 // ===== INITIALIZE API KEY =====
+// Key is either injected by GitHub Actions at deploy-time (production)
+// or loaded from the local .env file during development.
 async function initApiKey() {
   if (INJECTED_KEY && !INJECTED_KEY.startsWith('__')) {
+    // Production: key was injected by the CI/CD pipeline
     apiKey = INJECTED_KEY;
-    console.log('Using production API key.');
-    const btnChangeKey = document.getElementById('btnChangeKey');
-    if (btnChangeKey) btnChangeKey.style.display = 'none';
-    document.querySelectorAll('.btn-change-key').forEach(btn => btn.style.display = 'none');
+    console.log('✅ Using production API key (injected at build time).');
   } else {
+    // Development: load from local .env file
     await loadLocalApiKey();
     if (!apiKey) {
-      apiKey = localStorage.getItem('naijalearn_gemini_api_key') || '';
+      console.warn('⚠️ No API key found in .env — AI features will use offline fallback data.');
     }
   }
 }
@@ -84,7 +85,6 @@ async function loadLocalApiKey() {
 document.addEventListener('DOMContentLoaded', async () => {
   initParticles();
   await initApiKey();
-  setupApiKeyModal();
 
   // Category buttons
   document.querySelectorAll('.cat-btn').forEach(btn => {
@@ -129,12 +129,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const btnAskGemini = document.getElementById('btnAskGemini');
   if (btnAskGemini) {
     btnAskGemini.addEventListener('click', () => {
-      if (!apiKey) {
-        const modal = document.getElementById('apiKeyModal');
-        if (modal) modal.classList.add('show');
-      } else {
-        openGeminiPanel();
-      }
+      openGeminiPanel();
     });
   }
 
@@ -162,14 +157,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   const btnLoadingBack = document.getElementById('btnLoadingBack');
   if (btnLoadingBack) btnLoadingBack.addEventListener('click', () => showScreen('screen-home'));
-
-  const btnChangeKey = document.getElementById('btnChangeKey');
-  if (btnChangeKey) {
-    btnChangeKey.addEventListener('click', () => {
-      const modal = document.getElementById('apiKeyModal');
-      if (modal) modal.classList.add('show');
-    });
-  }
 
   // Stop button
   const btnStopQuiz = document.getElementById('btnStopQuiz');
@@ -275,10 +262,19 @@ async function startQuizSession() {
   playerName = nameInput ? nameInput.value.trim() : '';
   if (!playerName) playerName = 'Champ';
 
-  // Require API key — Gemini does everything
+  // If no API key is available, skip straight to fallback offline questions
   if (!apiKey) {
-    const modal = document.getElementById('apiKeyModal');
-    if (modal) modal.classList.add('show');
+    console.warn('No API key — using offline fallback questions.');
+    resetGameStats();
+    showLoadingScreen('📚 Loading offline questions...');
+    const result = typeof getFallbackQuestions === 'function' ? getFallbackQuestions(category) : [];
+    if (!result || result.length === 0) {
+      showLoadingError('⚠️ Could not load questions. Please refresh the page.');
+      return;
+    }
+    quizQuestions = result.slice(0, 20);
+    showScreen('screen-quiz');
+    showQuestion();
     return;
   }
 
@@ -725,35 +721,6 @@ async function showFunFactScreen() {
 }
 
 // ===== GEMINI CHAT PANEL =====
-function setupApiKeyModal() {
-  const modal    = document.getElementById('apiKeyModal');
-  const input    = document.getElementById('apiKeyInput');
-  const btnSave  = document.getElementById('btnSaveKey');
-  const btnSkip  = document.getElementById('btnSkipKey');
-
-  if (!modal) return;
-
-  if (apiKey && input) input.value = apiKey;
-
-  btnSave.addEventListener('click', async () => {
-    const val = input.value.trim();
-    if (!val) { alert('Please enter a valid API key.'); return; }
-    apiKey = val;
-    localStorage.setItem('naijalearn_gemini_api_key', apiKey);
-    modal.classList.remove('show');
-
-    // If on home screen → start quiz; otherwise → open chat
-    if (activeScreen === 'screen-home' || activeScreen === 'screen-loading') {
-      await startQuizSession();
-    } else {
-      openGeminiPanel();
-    }
-  });
-
-  btnSkip.addEventListener('click', () => {
-    modal.classList.remove('show');
-  });
-}
 
 function openGeminiPanel() {
   const panel = document.getElementById('geminiPanel');
